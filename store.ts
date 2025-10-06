@@ -28,6 +28,8 @@ interface AppActions {
   setSelection: (selection: DOMRect | null) => void;
   removeBackground: () => Promise<void>;
   generativeFill: (prompt: string) => Promise<void>;
+  reorderLayers: (draggedId: string, targetId: string) => void;
+  duplicateLayer: (id: string) => void;
 }
 
 export const useStore = create<AppState & AppActions>((set, get) => ({
@@ -87,7 +89,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
 
   setActiveLayerId: (id) => set({ activeLayerId: id }),
   setActiveTool: (tool) => set({ activeTool: tool }),
-  setZoom: (zoom) => set({ zoom: Math.max(0.1, zoom) }),
+  setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(zoom, 16)) }),
   setSelection: (selection) => set({ selection }),
 
   removeBackground: async () => {
@@ -164,4 +166,48 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         set({ isLoading: false, loadingMessage: 'Error generating image', selection: null, activeTool: Tool.Move });
     }
   },
+
+  reorderLayers: (draggedId, targetId) => set(state => {
+    const { layers } = state;
+    const draggedIndex = layers.findIndex(l => l.id === draggedId);
+    const targetIndex = layers.findIndex(l => l.id === targetId);
+  
+    if (draggedIndex === -1 || targetIndex === -1) {
+      return {};
+    }
+    
+    const newLayers = [...layers];
+    const [draggedLayer] = newLayers.splice(draggedIndex, 1);
+    newLayers.splice(targetIndex, 0, draggedLayer);
+  
+    return { layers: newLayers };
+  }),
+  
+  duplicateLayer: (id) => set(state => {
+      const { layers } = state;
+      const layerToDuplicate = layers.find(l => l.id === id);
+      if (!layerToDuplicate) return {};
+  
+      const newImage = new Image();
+      newImage.src = layerToDuplicate.image.src;
+      newImage.width = layerToDuplicate.width;
+      newImage.height = layerToDuplicate.height;
+  
+      const newId = `layer-${Date.now()}`;
+      const newLayer: Layer = {
+          ...layerToDuplicate,
+          id: newId,
+          name: `${layerToDuplicate.name} copy`,
+          image: newImage,
+      };
+  
+      const originalIndex = layers.findIndex(l => l.id === id);
+      const newLayers = [...layers];
+      newLayers.splice(originalIndex + 1, 0, newLayer);
+  
+      return {
+          layers: newLayers,
+          activeLayerId: newId,
+      };
+  }),
 }));

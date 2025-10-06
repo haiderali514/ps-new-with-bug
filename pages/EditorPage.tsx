@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useStore } from '../store';
 import { Tool } from '../types';
 import { LeftToolbar } from '../components/LeftToolbar';
@@ -14,14 +14,45 @@ const EditorPage: React.FC = () => {
     loadingMessage, 
     activeTool, 
     selection, 
-    canvasOptions
+    canvasOptions,
+    zoom,
+    setZoom
   } = useStore(state => ({
     isLoading: state.isLoading,
     loadingMessage: state.loadingMessage,
     activeTool: state.activeTool,
     selection: state.selection,
-    canvasOptions: state.canvasOptions
+    canvasOptions: state.canvasOptions,
+    zoom: state.zoom,
+    setZoom: state.setZoom
   }));
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        let zoomChanged = false;
+        if (e.key === '=' || e.key === '+') {
+          setZoom(zoom + 0.1);
+          zoomChanged = true;
+        } else if (e.key === '-') {
+          setZoom(zoom - 0.1);
+          zoomChanged = true;
+        } else if (e.key === '0') {
+          setZoom(1);
+          zoomChanged = true;
+        }
+
+        if (zoomChanged) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [zoom, setZoom]);
   
   if (!canvasOptions) {
     // This can happen briefly if state is cleared, maybe redirect home
