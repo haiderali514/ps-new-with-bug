@@ -1,0 +1,5 @@
+{
+  "name": "AI Photo Editor",
+  "description": "A web-based photo editor inspired by Photoshop, powered by the Gemini API for generative AI features like background removal and generative fill.",
+  "requestFramePermissions": []
+}
