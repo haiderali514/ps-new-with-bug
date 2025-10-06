@@ -15,6 +15,7 @@ export interface Layer {
   height: number;
   visible: boolean;
   opacity: number;
+  blendingMode: string;
 }
 
 export enum Tool {

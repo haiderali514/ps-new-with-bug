@@ -1,3 +1,4 @@
+
 import { create } from 'zustand';
 import type { CanvasOptions, Layer } from './types';
 import { Tool } from './types';
@@ -19,6 +20,7 @@ interface AppActions {
   goToEditor: (options: CanvasOptions, initialImage?: File) => void;
   goHome: () => void;
   addLayer: (layer: Layer) => void;
+  addNewLayer: () => void;
   updateLayer: (id: string, updates: Partial<Layer>) => void;
   setLayers: (layers: Layer[]) => void;
   deleteLayer: (id: string) => void;
@@ -55,25 +57,100 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
     activeTool: Tool.Move 
   }),
 
-  goToEditor: (options, initialImage) => {
-    set({ currentPage: 'Editor', canvasOptions: options, isLoading: true, loadingMessage: 'Setting up canvas...' });
+  goToEditor: (options, initialImageFile) => {
+    set({ currentPage: 'Editor', canvasOptions: options, isLoading: true, loadingMessage: 'Creating document...' });
     
-    const id = `layer-${Date.now()}`;
-    
-    if (initialImage) {
-      const image = new Image();
-      image.onload = () => {
-        const newLayer: Layer = { id, name: 'Image 1', image, x: 0, y: 0, width: image.width, height: image.height, visible: true, opacity: 1 };
-        set({ layers: [newLayer], activeLayerId: id, isLoading: false, loadingMessage: '' });
-      };
-      image.src = URL.createObjectURL(initialImage);
-    } else {
-      const newLayer: Layer = { id, name: 'Background', image: new Image(options.width, options.height), x: 0, y: 0, width: options.width, height: options.height, visible: true, opacity: 1 };
-      set({ layers: [newLayer], activeLayerId: id, isLoading: false, loadingMessage: '' });
+    // Create Background Layer
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = options.width;
+    bgCanvas.height = options.height;
+    const bgCtx = bgCanvas.getContext('2d');
+    if (bgCtx && options.backgroundColor !== 'transparent') {
+        bgCtx.fillStyle = options.backgroundColor;
+        bgCtx.fillRect(0, 0, options.width, options.height);
     }
+    
+    const bgImage = new Image();
+    bgImage.onload = () => {
+        const bgId = `layer-bg-${Date.now()}`;
+        const backgroundLayer: Layer = { 
+            id: bgId, 
+            name: 'Background', 
+            image: bgImage, 
+            x: 0, 
+            y: 0, 
+            width: options.width, 
+            height: options.height, 
+            visible: true, 
+            opacity: 1,
+            blendingMode: 'normal'
+        };
+        
+        const layers: Layer[] = [backgroundLayer];
+        let activeLayerId: string | null = bgId;
+
+        if (initialImageFile) {
+            const initialImage = new Image();
+            initialImage.onload = () => {
+                const imgId = `layer-img-${Date.now()}`;
+                const imageLayer: Layer = {
+                    id: imgId,
+                    name: 'Layer 1',
+                    image: initialImage,
+                    x: (options.width - initialImage.width) / 2, // Center the image
+                    y: (options.height - initialImage.height) / 2,
+                    width: initialImage.width,
+                    height: initialImage.height,
+                    visible: true,
+                    opacity: 1,
+                    blendingMode: 'normal'
+                };
+                layers.push(imageLayer);
+                set({ layers, activeLayerId: imgId, isLoading: false, loadingMessage: '' });
+            };
+            initialImage.src = URL.createObjectURL(initialImageFile);
+        } else {
+            set({ layers, activeLayerId, isLoading: false, loadingMessage: '' });
+        }
+    };
+    bgImage.src = bgCanvas.toDataURL();
   },
   
-  addLayer: (layer) => set(state => ({ layers: [...state.layers, layer] })),
+  addLayer: (layer) => set(state => {
+    const activeIndex = state.activeLayerId ? state.layers.findIndex(l => l.id === state.activeLayerId) : -1;
+    const newLayers = [...state.layers];
+    if (activeIndex !== -1) {
+        newLayers.splice(activeIndex + 1, 0, layer);
+    } else {
+        newLayers.push(layer);
+    }
+    return { layers: newLayers };
+  }),
+
+  addNewLayer: () => {
+    const { canvasOptions, addLayer, setActiveLayerId } = get();
+    if (!canvasOptions) return;
+    
+    const id = `layer-${Date.now()}`;
+    // Create a new blank (transparent) image
+    const newImage = new Image(canvasOptions.width, canvasOptions.height);
+    
+    const newLayer: Layer = {
+      id,
+      name: `Layer ${get().layers.length}`,
+      image: newImage,
+      x: 0,
+      y: 0,
+      width: canvasOptions.width,
+      height: canvasOptions.height,
+      visible: true,
+      opacity: 1,
+      blendingMode: 'normal'
+    };
+
+    addLayer(newLayer);
+    setActiveLayerId(id);
+  },
   
   updateLayer: (id, updates) => set(state => ({
     layers: state.layers.map(l => l.id === id ? { ...l, ...updates } : l)
@@ -82,8 +159,17 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
   setLayers: (layers) => set({ layers }),
 
   deleteLayer: (id) => set(state => {
+    // Prevent deleting the background layer
+    if (state.layers.length > 0 && state.layers[0].id === id) return {};
+    
     const newLayers = state.layers.filter(l => l.id !== id);
-    const newActiveId = state.activeLayerId === id ? (newLayers.length > 0 ? newLayers[newLayers.length - 1].id : null) : state.activeLayerId;
+    let newActiveId = state.activeLayerId;
+    if (state.activeLayerId === id) {
+      const deletedIndex = state.layers.findIndex(l => l.id === id);
+      // Select the layer below, or the new bottom-most layer if the deleted one was at the bottom
+      const newIndex = Math.max(0, deletedIndex - 1);
+      newActiveId = newLayers.length > 0 ? newLayers[newIndex].id : null;
+    }
     return { layers: newLayers, activeLayerId: newActiveId };
   }),
 
@@ -152,6 +238,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
                     height: newImage.height,
                     visible: true,
                     opacity: 1,
+                    blendingMode: 'normal',
                 };
                 addLayer(newLayer);
                 setActiveLayerId(id);
@@ -169,15 +256,24 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
 
   reorderLayers: (draggedId, targetId) => set(state => {
     const { layers } = state;
+    // Prevent dragging below the background layer
+    if (layers.length > 0 && targetId === layers[0].id) {
+        return {};
+    }
+
     const draggedIndex = layers.findIndex(l => l.id === draggedId);
-    const targetIndex = layers.findIndex(l => l.id === targetId);
+    let targetIndex = layers.findIndex(l => l.id === targetId);
   
-    if (draggedIndex === -1 || targetIndex === -1) {
+    if (draggedIndex === -1 || targetIndex === -1 || draggedIndex === 0) {
       return {};
     }
     
     const newLayers = [...layers];
     const [draggedLayer] = newLayers.splice(draggedIndex, 1);
+    
+    // Adjust target index if dragged item was moved from below
+    targetIndex = newLayers.findIndex(l => l.id === targetId);
+
     newLayers.splice(targetIndex, 0, draggedLayer);
   
     return { layers: newLayers };

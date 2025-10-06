@@ -5,7 +5,6 @@ import { Tool } from '../types';
 
 export const CanvasComponent: React.FC = memo(() => {
   const { 
-    // Fix: Destructure `canvasOptions` and alias it as `options`.
     canvasOptions: options, 
     layers, 
     activeLayerId, 
@@ -28,8 +27,6 @@ export const CanvasComponent: React.FC = memo(() => {
     dragOffsetY: number;
   }>({ isDragging: false, isSelecting: false, startX: 0, startY: 0, dragOffsetX: 0, dragOffsetY: 0 });
 
-  // Use a ref to hold the latest state for use in event listeners without adding them to dependencies.
-  // Fix: Add `selection` to the state ref to access its latest value in event handlers.
   const stateRef = useRef({ layers, activeLayerId, activeTool, zoom, selection, updateLayer, setActiveLayerId, setSelection });
   useEffect(() => {
     stateRef.current = { layers, activeLayerId, activeTool, zoom, selection, updateLayer, setActiveLayerId, setSelection };
@@ -44,23 +41,27 @@ export const CanvasComponent: React.FC = memo(() => {
     canvas.width = options.width;
     canvas.height = options.height;
 
-    // Clear canvas and draw background
+    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (options.backgroundColor !== 'transparent') {
-      ctx.fillStyle = options.backgroundColor;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
+    
+    // The checkerboard pattern is handled by a background div, so we don't draw a background here if it's transparent.
+    // This allows the checkerboard to show through. If a solid color is needed, the background layer will handle it.
 
     // Draw layers
     layers.forEach(layer => {
       if (layer.visible && layer.image.complete && layer.image.naturalWidth > 0) {
         ctx.globalAlpha = layer.opacity;
+        ctx.globalCompositeOperation = layer.blendingMode as GlobalCompositeOperation;
         ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
-        ctx.globalAlpha = 1.0;
       }
     });
 
-  }, [layers, options]);
+    // Reset context properties
+    ctx.globalAlpha = 1.0;
+    ctx.globalCompositeOperation = 'source-over';
+
+
+  }, [layers, options, zoom]); // Redraw on zoom as well to ensure sharpness if needed in future
   
   // Event handlers for mouse interaction
   useEffect(() => {
@@ -82,16 +83,25 @@ export const CanvasComponent: React.FC = memo(() => {
         const { activeTool, layers, setActiveLayerId, setSelection } = stateRef.current;
         
         if (activeTool === Tool.Move) {
-            const clickedLayer = [...layers].reverse().find(layer => 
+            // Find the top-most clicked layer, ignoring the background layer for selection if other layers are present.
+            const clickableLayers = layers.length > 1 ? layers.slice(1) : layers;
+            const clickedLayer = [...clickableLayers].reverse().find(layer => 
                 layer.visible && x >= layer.x && x <= layer.x + layer.width && y >= layer.y && y <= layer.y + layer.height
             );
+
             if (clickedLayer) {
                 setActiveLayerId(clickedLayer.id);
                 interactionState.current.isDragging = true;
                 interactionState.current.dragOffsetX = x - clickedLayer.x;
                 interactionState.current.dragOffsetY = y - clickedLayer.y;
             } else {
-                setActiveLayerId(null);
+                 // If no specific layer is clicked, check if the background is clicked.
+                 const backgroundLayer = layers[0];
+                 if(backgroundLayer && backgroundLayer.visible && x >= backgroundLayer.x && x <= backgroundLayer.x + backgroundLayer.width && y >= backgroundLayer.y && y <= backgroundLayer.y + backgroundLayer.height){
+                     setActiveLayerId(backgroundLayer.id);
+                 } else {
+                    setActiveLayerId(null);
+                 }
             }
         } else if (activeTool === Tool.GenerativeFill) {
             interactionState.current.isSelecting = true;
@@ -101,11 +111,11 @@ export const CanvasComponent: React.FC = memo(() => {
 
     const onMouseMove = (e: MouseEvent) => {
         const { x, y } = getCoords(e);
-        // Fix: `activeTool` should be destructured from `stateRef` not `interactionState`.
         const { isDragging, isSelecting } = interactionState.current;
-        const { activeTool, activeLayerId, updateLayer, setSelection, zoom } = stateRef.current;
+        const { activeTool, activeLayerId, updateLayer, setSelection, zoom, layers } = stateRef.current;
+        const isBackground = activeLayerId === layers[0]?.id;
 
-        if (activeTool === Tool.Move && isDragging && activeLayerId) {
+        if (activeTool === Tool.Move && isDragging && activeLayerId && !isBackground) {
             const newX = x - interactionState.current.dragOffsetX;
             const newY = y - interactionState.current.dragOffsetY;
             updateLayer(activeLayerId, { x: newX, y: newY });
@@ -142,35 +152,39 @@ export const CanvasComponent: React.FC = memo(() => {
 
   if (!options) return null;
 
+  const activeLayer = layers.find(l => l.id === activeLayerId);
+
   return (
     <div 
         className="relative shadow-lg"
         style={{
             width: options.width * zoom,
             height: options.height * zoom,
-            cursor: activeTool === Tool.Move ? 'move' : 'crosshair'
         }}
     >
+      <div 
+          className={`absolute top-0 left-0 w-full h-full ${options.backgroundColor === 'transparent' ? 'checkerboard' : ''}`}
+          style={{ backgroundColor: options.backgroundColor === 'transparent' ? '' : options.backgroundColor }}
+      />
       <canvas
         ref={canvasRef}
-        className={`absolute top-0 left-0 ${options.backgroundColor === 'transparent' ? 'checkerboard' : ''}`}
+        className="absolute top-0 left-0"
         style={{
             transform: `scale(${zoom})`,
             transformOrigin: 'top left',
+            cursor: activeTool === Tool.Move && activeLayer && activeLayer.name !== 'Background' ? 'move' : (activeTool === Tool.GenerativeFill ? 'crosshair' : 'default')
         }}
       />
       {/* Active Layer Bounding Box */}
-      {activeTool === Tool.Move && activeLayerId && (() => {
-          const layer = layers.find(l => l.id === activeLayerId);
-          if (!layer) return null;
+      {activeTool === Tool.Move && activeLayer && activeLayer.name !== 'Background' && (() => {
           return (
             <div 
                 className="absolute border-2 border-blue-500 pointer-events-none"
                 style={{
-                    left: layer.x * zoom,
-                    top: layer.y * zoom,
-                    width: layer.width * zoom,
-                    height: layer.height * zoom,
+                    left: activeLayer.x * zoom,
+                    top: activeLayer.y * zoom,
+                    width: activeLayer.width * zoom,
+                    height: activeLayer.height * zoom,
                 }}
             />
           );
